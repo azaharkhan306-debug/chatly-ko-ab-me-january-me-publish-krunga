@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 
 # Backend URL from frontend/.env
-BACKEND_URL = "https://e98149bb-9c03-4d9e-ac1e-7caaface0345.preview.emergentagent.com/api"
+BACKEND_URL = "https://chatly-staging-1.preview.emergentagent.com/api"
 
 # Test credentials from test_credentials.md
 DEMO_EMAIL = "demo@chatly.app"

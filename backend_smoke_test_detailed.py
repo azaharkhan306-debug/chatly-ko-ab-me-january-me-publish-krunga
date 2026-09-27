@@ -6,7 +6,7 @@ Detailed smoke test to inspect actual response structures.
 import requests
 import json
 
-BACKEND_URL = "https://e98149bb-9c03-4d9e-ac1e-7caaface0345.preview.emergentagent.com/api"
+BACKEND_URL = "https://chatly-staging-1.preview.emergentagent.com/api"
 TEST_EMAIL = "demo@chatly.app"
 TEST_PASSWORD = "Demo1234"
 

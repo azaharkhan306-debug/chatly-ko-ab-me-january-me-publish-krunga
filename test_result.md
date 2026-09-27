@@ -886,7 +886,7 @@ agent_communication:
       
       ALL 7 TESTS PASSED (7/7) - NO FAILURES
       
-      Tested ALL NEW/CHANGED endpoints for Phase 10 at https://chatly-mobile-1.preview.emergentagent.com/api using credentials demo@chatly.app / Demo1234 and demo2@chatly.app / Demo1234.
+      Tested ALL NEW/CHANGED endpoints for Phase 10 at https://chatly-staging-1.preview.emergentagent.com/api using credentials demo@chatly.app / Demo1234 and demo2@chatly.app / Demo1234.
       
       ✅ TEST 1: AI MESSAGE ACTIONS (4/4 PASS)
       • Translate Hinglish→English: 'Bhai kal report bhej dena please' → 'Bro, please send the report tomorrow.' (auto-detected source, correct translation)
@@ -1564,3 +1564,16 @@ firebase_admin_private_key_fix:
       -agent: "testing"
       -comment: "Firebase Admin smoke test completed: 20 passed, 0 failed. Status ready=true/error=null, custom token minting, Storage bucket handle, Firestore read, invalid-token 401 handling, demo login, /auth/me, and /chats all passed. No secrets or stack traces exposed."
 
+
+environment_restoration_run:
+  - task: "Fresh container: restore env files, deps, and run the app (user-provided credentials)"
+    implemented: true
+    working: true
+    file: "backend/.env, backend/firebase-admin.json, frontend/.env, frontend/google.service.json"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      -working: true
+      -agent: "main"
+      -comment: "Container restarted fresh (node_modules and env files missing). Restored: backend/.env (MONGO_URL, JWT_SECRET, Sarvam/Tavily/Emergent/Email keys, OTP_DEBUG=1, Firebase Admin paths), backend/firebase-admin.json (user-provided service account, git-ignored), frontend/.env (EXPO_PUBLIC_FIREBASE_* mapped from google.service.json + empty EXPO_PUBLIC_BACKEND_URL for relative /api), frontend/google.service.json (client config reference). Deps: yarn install OK; pip requirements.txt had emergentintegrations/litellm wheel resolution conflict so installed missing firebase-admin==7.6.0 directly (all other pins already present). Services: backend RUNNING + /api/firebase/status {ready:true, bucket:chatlyai-12478.firebasestorage.app}, demo login 200, expo RUNNING with .env loaded (EXPO_PUBLIC_FIREBASE_* exported), web bundle OK (1825 modules), login screen verified rendered via Playwright DOM + screenshot. Note: localhost:3000/api/* is served by Metro SPA fallback inside the container; /api->8001 routing happens at the platform ingress for the preview URL (as in all prior rounds)."
