@@ -18,10 +18,6 @@ import { useCall } from "@/src/calls";
 import { fileUrl, pickImageFromLibrary, captureImage, pickDocument, uploadImage, uploadDocument, uploadVoice } from "@/src/upload";
 import { track } from "@/src/analytics";
 import { CHAT_THEME_PRESETS, ACCENTS, resolveChatTheme, type ChatTheme } from "@/src/chatThemes";
-import {
-  loadCachedMessages, saveCachedMessages, upsertCachedMessage,
-  enqueueOutbox, generateClientMessageId,
-} from "@/src/offlineChat";
 import dayjs from "dayjs";
 
 type Msg = {
@@ -87,6 +83,7 @@ export default function ChatScreen() {
   const recState = useAudioRecorderState(recorder);
   const recStart = useRef<number>(0);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [text, setText] = useState("");
   const [otherTyping, setOtherTyping] = useState(false);
   const [smartReplies, setSmartReplies] = useState<string[]>([]);
@@ -198,21 +195,15 @@ export default function ChatScreen() {
   };
 
   const load = useCallback(async () => {
-    // 1. Hydrate from local cache instantly so the chat opens with real content
-    //    even while offline / on a cold start.
-    const cached = await loadCachedMessages(String(id));
-    if (cached.length) {
-      setMessages(cached);
-      setLoading(false);
-    }
+    // Online-only: messages always come from the server (offline mode removed).
     try {
       const res = await api.get<{ messages: Msg[] }>(`/chats/${id}/messages`);
       setMessages(res.messages);
-      await saveCachedMessages(String(id), res.messages as any);
       didInitialScroll.current = false;
       atBottomRef.current = true;
+      setLoadError(false);
     } catch {
-      if (!cached.length) toast.show("Showing offline messages — will refresh when back online", "info");
+      setLoadError(true);
     }
     finally { setLoading(false); }
   }, [id]);
@@ -243,7 +234,6 @@ export default function ChatScreen() {
     if (ev.type === "message") {
       const mine = ev.message?.sender_id === user?.user_id;
       setMessages((prev) => prev.some((m) => m.message_id === ev.message.message_id) ? prev : [...prev, ev.message]);
-      upsertCachedMessage(String(id), ev.message).catch(() => {});
       setSmartReplies([]);
       // Auto-scroll only if the user is already near the bottom (don't yank them up
       // while they read older messages); otherwise surface a jump-to-latest button.
@@ -263,7 +253,8 @@ export default function ChatScreen() {
     if (!body) return;
     setText(""); setSmartReplies([]);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    const client_message_id = generateClientMessageId();
+    // Idempotency key for server-side duplicate prevention.
+    const client_message_id = "c-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
     const optimistic: Msg = {
       message_id: "tmp_" + Date.now(), chat_id: String(id), sender_id: user!.user_id, text: body,
       status: "sending", reactions: {}, starred_by: [], edited: false, deleted: false, created_at: new Date().toISOString(),
@@ -274,17 +265,12 @@ export default function ChatScreen() {
     try {
       const res = await api.post<{ message: Msg }>(`/chats/${id}/messages`, { text: body, client_message_id });
       setMessages((p) => p.map((m) => m.message_id === optimistic.message_id ? res.message : m));
-      await upsertCachedMessage(String(id), res.message as any);
       try { track("message_sent", { chat_id: String(id), chars: body.length }); } catch {}
     } catch {
-      // Queue the send for automatic retry on reconnect. Marks the row as pending so
-      // the user sees "queued" state instead of a raw failure.
-      await enqueueOutbox({
-        chat_id: String(id), client_message_id, text: body, type: "text",
-        reply_to: null, priority: null, created_at: optimistic.created_at, attempts: 1,
-      });
-      setMessages((p) => p.map((m) => m.message_id === optimistic.message_id ? { ...m, status: "queued" } : m));
-      toast.show("Saved — will send when back online", "info");
+      // Online-only (no offline outbox): surface the failure clearly so the
+      // user can resend when connected.
+      setMessages((p) => p.map((m) => m.message_id === optimistic.message_id ? { ...m, status: "failed" } : m));
+      toast.show("Message not sent — check your connection and try again", "error");
     }
   };
 
@@ -667,7 +653,16 @@ export default function ChatScreen() {
       </View>
 
       <KeyboardAvoidingView style={{ flex: 1, backgroundColor: ct.bg }} behavior="padding" keyboardVerticalOffset={0}>
-        {loading ? <Loading /> : (
+        {loading ? <Loading /> : loadError && !messages.length ? (
+          <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.xl }}>
+            <Icon name="cloud-offline-outline" size={42} color={colors.onSurfaceMuted} />
+            <AppText weight="bold" size="lg" style={{ marginTop: spacing.md }}>Couldn't load messages</AppText>
+            <AppText muted style={{ textAlign: "center", marginTop: 4 }}>Check your internet connection and try again.</AppText>
+            <Pressable testID="retry-messages" onPress={() => { setLoading(true); setLoadError(false); load(); }} style={{ marginTop: spacing.lg, backgroundColor: colors.brandPrimary, borderRadius: radius.pill, paddingHorizontal: spacing.xl, height: 44, alignItems: "center", justifyContent: "center" }}>
+              <AppText weight="bold" color="#fff">Retry</AppText>
+            </Pressable>
+          </View>
+        ) : (
           <FlatList
             ref={listRef}
             data={items}

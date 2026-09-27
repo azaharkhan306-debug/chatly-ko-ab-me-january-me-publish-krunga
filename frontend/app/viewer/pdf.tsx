@@ -1,14 +1,11 @@
 /**
- * In-app PDF/document preview. We download the file into the on-device cache
- * and render it inside an in-app WebView-backed viewer.
+ * In-app PDF/document preview. The document streams from the server through an
+ * in-app WebView-backed viewer.
  *
  * Because expo-managed doesn't ship a native PDF component out of the box, we
- * use Google's Docs Viewer as a robust fallback (works for PDF/DOC/DOCX/XLS/
- * PPT/TXT). If offline we fall back to the cached local file via Sharing +
- * expo-web-browser openBrowserAsync which stays inside the Chatly context on
- * Android via Custom Tabs. This is deliberately a two-tier viewer: 1) render
- * inline when we can, 2) hand off to the OS-level in-app browser otherwise —
- * without pushing the user out to a random 3rd-party app.
+ * use Google's Docs Viewer as a robust viewer (works for PDF/DOC/DOCX/XLS/
+ * PPT/TXT). Sharing hands the file to the OS viewer with an on-demand download
+ * when the user asks for it — the app is online-only (no offline media cache).
  */
 import React, { useEffect, useMemo, useState } from "react";
 import { View, Pressable, StyleSheet, StatusBar, Platform, ActivityIndicator, Linking } from "react-native";
@@ -17,7 +14,6 @@ import * as WebBrowser from "expo-web-browser";
 import * as Sharing from "expo-sharing";
 import { Ionicons } from "@expo/vector-icons";
 import { AppText, Button } from "@/src/ui";
-import { ensureCached } from "@/src/mediaCache";
 import { useTheme, spacing } from "@/src/theme";
 import { track } from "@/src/analytics";
 
@@ -33,20 +29,10 @@ export default function PdfViewer() {
 
   useEffect(() => {
     track("media_viewed_pdf", { ext: String(params.ext || "") });
-    (async () => {
-      try {
-        setLoading(true);
-        const key = String(params.cacheKey || remote);
-        const ext = String(params.ext || ".pdf");
-        const cached = await ensureCached(remote, key, ext);
-        setLocalUri(cached);
-      } catch {
-        setError("Couldn't download this document.");
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [remote, params.cacheKey, params.ext]);
+    // Online-only: preview streams via the in-app browser viewer; the share
+    // action downloads on demand (no offline media cache).
+    setLoading(false);
+  }, [remote, params.ext]);
 
   // We can only hand a public URL to Google Docs Viewer. Our storage requires a
   // signed token in the URL, and that token is already embedded in `remote`.
@@ -78,12 +64,23 @@ export default function PdfViewer() {
   };
 
   const openLocalWithOs = async () => {
-    if (!localUri) return;
+    // Download on demand (user-initiated), then hand off to the OS.
     try {
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(localUri, { mimeType: String(params.mime || "application/pdf"), dialogTitle: title });
+      let target = localUri;
+      if (!target && remote) {
+        const FS: any = require("expo-file-system/legacy");
+        const ext = String(params.ext || ".pdf");
+        target = (FS.cacheDirectory || "") + "share-" + Date.now() + ext;
+        const r = await FS.downloadAsync(remote, target);
+        target = r?.uri || target;
+        setLocalUri(target);
       }
-    } catch {}
+      if (target && await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(target, { mimeType: String(params.mime || "application/pdf"), dialogTitle: title });
+      }
+    } catch {
+      setError("Couldn't download this document. Check your connection and try again.");
+    }
   };
 
   return (

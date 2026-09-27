@@ -9,7 +9,6 @@ import { AppText, Avatar, Icon, EmptyState, Skeleton } from "@/src/ui";
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { useWs } from "@/src/ws";
-import { storage } from "@/src/utils/storage";
 import dayjs from "dayjs";
 
 type Chat = {
@@ -42,19 +41,13 @@ export default function Chats() {
 
   const load = useCallback(async () => {
     setError(false);
-    // Hydrate the cached list instantly so the screen never shows a
-    // "check connection" dead-end when the request is merely slow.
-    if (!chats.length) {
-      const cached = await storage.getItem<Chat[] | null>("chatly_chats_cache", null);
-      if (cached?.length) { setChats(cached); setLoading(false); }
-    }
-    // Retry network/timeout failures automatically (2 extra attempts).
+    // Online-only (offline mode removed): the list always comes from the server,
+    // with automatic retry on transient network/timeout failures.
     let lastErr: any = null;
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         const res = await api.get<{ chats: Chat[] }>("/chats");
         setChats(res.chats);
-        storage.setItem("chatly_chats_cache", res.chats as any);
         setError(false);
         setLoading(false); setRefreshing(false);
         return;
@@ -67,7 +60,7 @@ export default function Chats() {
     }
     if (lastErr) setError(true);
     setLoading(false); setRefreshing(false);
-  }, [chats.length]);
+  }, []);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 

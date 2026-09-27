@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useCallback, useState } from "react";
 import { wsUrl } from "@/src/api";
 import { useAuth } from "@/src/auth";
-import { drainOutbox, pullSince } from "@/src/offlineChat";
 
 type Listener = (event: any) => void;
 
@@ -21,14 +20,6 @@ export function WsProvider({ children }: { children: React.ReactNode }) {
   const shouldConnect = useRef(false);
   const [online, setOnline] = useState(false);
 
-  const runReconnectSync = useCallback(async () => {
-    try {
-      const pulled = await pullSince();
-      pulled.forEach((m) => listeners.current.forEach((fn) => fn({ type: "message", chat_id: m.chat_id, message: m })));
-    } catch {}
-    try { await drainOutbox(); } catch {}
-  }, []);
-
   const connect = useCallback(() => {
     if (!token) return;
     // Drop any half-open socket before dialing again.
@@ -38,7 +29,6 @@ export function WsProvider({ children }: { children: React.ReactNode }) {
       wsRef.current = ws;
       ws.onopen = () => {
         setOnline(true);
-        runReconnectSync();
       };
       ws.onmessage = (e) => {
         try {
@@ -56,7 +46,7 @@ export function WsProvider({ children }: { children: React.ReactNode }) {
         try { ws.close(); } catch {}
       };
     } catch {}
-  }, [token, runReconnectSync]);
+  }, [token]);
 
   useEffect(() => {
     if (token) {

@@ -9,7 +9,6 @@ import { Stack, useLocalSearchParams, router } from "expo-router";
 import { VideoView, useVideoPlayer } from "expo-video";
 import { Ionicons } from "@expo/vector-icons";
 import { AppText } from "@/src/ui";
-import { ensureCached } from "@/src/mediaCache";
 import { track } from "@/src/analytics";
 
 export default function VideoViewer() {
@@ -23,11 +22,8 @@ export default function VideoViewer() {
     (async () => {
       try {
         setLoading(true);
-        const uri = String(params.uri || "");
-        const key = String(params.cacheKey || uri);
-        const ext = String(params.ext || ".mp4");
-        const cached = await ensureCached(uri, key, ext);
-        setSource(cached);
+        // Online-only: stream straight from the server (media cache removed).
+        setSource(String(params.uri || ""));
       } catch {
         setError("Couldn't load this video.");
       } finally {
