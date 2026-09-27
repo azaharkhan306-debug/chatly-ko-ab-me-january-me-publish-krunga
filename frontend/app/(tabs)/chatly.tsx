@@ -6,7 +6,9 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { Image } from "expo-image";
 import { useTheme, spacing, radius } from "@/src/theme";
+import { SwipeNav } from "@/src/SwipeNav";
 import { AppText, Icon, Card } from "@/src/ui";
+import { LogoGlyph } from "@/src/Logo";
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 
@@ -65,6 +67,7 @@ export default function Chatly() {
   ];
 
   return (
+    <SwipeNav tab="chatly">
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
       <ScrollView
         contentContainerStyle={{ paddingBottom: spacing.xxl }}
@@ -94,7 +97,7 @@ export default function Chatly() {
         <Pressable testID="ask-chatly-card" onPress={() => router.push("/assistant")} style={{ marginHorizontal: spacing.lg, marginTop: -spacing.xl }}>
           <LinearGradient colors={[colors.brandPrimary, colors.brandSecondary]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.askCard}>
             <View style={{ width: 46, height: 46, borderRadius: 14, backgroundColor: "rgba(255,255,255,0.22)", alignItems: "center", justifyContent: "center" }}>
-              <Icon name="sparkles" size={26} color="#fff" />
+              <LogoGlyph size={30} />
             </View>
             <View style={{ flex: 1, marginLeft: spacing.md }}>
               <AppText weight="bold" size="lg" color="#fff">Ask Chatly</AppText>
@@ -135,6 +138,7 @@ export default function Chatly() {
         </View>
       </ScrollView>
     </View>
+    </SwipeNav>
   );
 }
 

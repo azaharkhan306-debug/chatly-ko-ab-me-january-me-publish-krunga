@@ -1,11 +1,13 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo, memo } from "react";
 import { View, FlatList, Pressable, RefreshControl, TextInput, StyleSheet, Modal } from "react-native";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme, spacing, radius, fontSize } from "@/src/theme";
+import { SwipeNav } from "@/src/SwipeNav";
 import { AppText, Avatar, Icon, EmptyState, Skeleton } from "@/src/ui";
 import { api } from "@/src/api";
+import { useAuth } from "@/src/auth";
 import { useWs } from "@/src/ws";
 import dayjs from "dayjs";
 
@@ -52,39 +54,44 @@ export default function Chats() {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
-  useEffect(() => subscribe((ev) => { if (ev.type === "message") load(); }), [subscribe, load]);
+  // Realtime updates: patch the affected row IN PLACE instead of refetching the
+  // whole list on every incoming message (the old behaviour made one full
+  // /chats request per received message — heavy and laggy in active chats).
+  // A full refresh only happens for unknown chats (new conversation) and on
+  // focus / pull-to-refresh.
+  const { user } = useAuth();
+  const myId = user?.user_id;
+  useEffect(() => subscribe((ev) => {
+    if (ev.type !== "message") return;
+    const m = ev.message;
+    if (!m?.chat_id) return;
+    setChats((prev) => {
+      const idx = prev.findIndex((c) => c.chat_id === m.chat_id);
+      if (idx < 0) { load(); return prev; } // brand-new chat -> full refresh
+      const row = prev[idx];
+      const bumpUnread = m.sender_id && m.sender_id !== myId ? 1 : 0;
+      const updated: Chat = {
+        ...row,
+        last_message: m.deleted ? "This message was deleted" : (m.text || row.last_message),
+        last_ts: m.created_at || row.last_ts,
+        unread: (row.unread || 0) + bumpUnread,
+      };
+      return [updated, ...prev.filter((_, i) => i !== idx)]; // most-recent first
+    });
+  }), [subscribe, load, myId]);
 
-  const filtered = chats.filter((c) => c.other?.name?.toLowerCase().includes(query.toLowerCase()));
-  const sorted = [...filtered].sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
+  const sorted = useMemo(() => {
+    const f = chats.filter((c) => c.other?.name?.toLowerCase().includes(query.toLowerCase()));
+    return [...f].sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0));
+  }, [chats, query]);
 
-  const renderRow = ({ item }: { item: Chat }) => (
-    <Pressable
-      testID={`chat-row-${item.other?.user_id}`}
-      onPress={() => router.push({ pathname: "/chat/[id]", params: { id: item.chat_id, name: item.other?.name } })}
-      onLongPress={() => setDeleteTarget(item)}
-      delayLongPress={350}
-      style={({ pressed }) => [styles.row, { backgroundColor: pressed ? colors.surfaceTertiary : "transparent" }]}
-    >
-      <Avatar name={item.other?.name} uri={item.other?.avatar} size={54} online={item.other?.online} />
-      <View style={{ flex: 1, marginLeft: spacing.md }}>
-        <View style={{ flexDirection: "row", alignItems: "center" }}>
-          <AppText weight="semibold" size="lg" style={{ flex: 1 }} numberOfLines={1}>{item.other?.name}</AppText>
-          <AppText size="sm" muted>{item.last_ts ? dayjs(item.last_ts).format("HH:mm") : ""}</AppText>
-        </View>
-        <View style={{ flexDirection: "row", alignItems: "center", marginTop: 3 }}>
-          <AppText muted size="base" style={{ flex: 1 }} numberOfLines={1}>{item.last_message || "Tap to start chatting"}</AppText>
-          {item.pinned && <Icon name="pin" size={14} color={colors.onSurfaceMuted} />}
-          {item.unread > 0 && (
-            <View style={{ backgroundColor: colors.brandPrimary, borderRadius: 11, minWidth: 22, height: 22, alignItems: "center", justifyContent: "center", paddingHorizontal: 6, marginLeft: 6 }}>
-              <AppText size="xs" weight="bold" color="#fff">{item.unread}</AppText>
-            </View>
-          )}
-        </View>
-      </View>
-    </Pressable>
-  );
+
+  const onRowPress = useCallback((row: Chat) => {
+    router.push({ pathname: "/chat/[id]", params: { id: row.chat_id, name: row.other?.name } });
+  }, [router]);
 
   return (
+    <SwipeNav tab="index">
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
       <View style={{ paddingTop: insets.top + spacing.sm, paddingHorizontal: spacing.lg, paddingBottom: spacing.sm, backgroundColor: colors.surface }}>
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.md }}>
@@ -118,7 +125,7 @@ export default function Chats() {
         <FlatList
           data={sorted}
           keyExtractor={(c) => c.chat_id}
-          renderItem={renderRow}
+          renderItem={({ item }) => <ChatRow item={item} onPress={onRowPress} onLongPress={setDeleteTarget} colors={colors} />}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
           contentContainerStyle={{ paddingHorizontal: spacing.lg, paddingBottom: spacing.xl }}
@@ -141,10 +148,41 @@ export default function Chats() {
         </Pressable>
       </Modal>
     </View>
+    </SwipeNav>
   );
 }
 
 const styles = StyleSheet.create({
   row: { flexDirection: "row", alignItems: "center", paddingVertical: spacing.md, borderRadius: radius.md },
   search: { flexDirection: "row", alignItems: "center", height: 44, borderRadius: radius.pill, paddingHorizontal: spacing.md },
+});
+
+// Memoized chat row — re-renders only when its own chat data changes.
+const ChatRow = memo(function ChatRow({ item, onPress, onLongPress, colors: c }: any) {
+  return (
+    <Pressable
+      testID={`chat-row-${item.other?.user_id}`}
+      onPress={() => onPress(item)}
+      onLongPress={() => onLongPress(item)}
+      delayLongPress={350}
+      style={({ pressed }) => [styles.row, { backgroundColor: pressed ? c.surfaceTertiary : "transparent" }]}
+    >
+      <Avatar name={item.other?.name} uri={item.other?.avatar} size={54} online={item.other?.online} />
+      <View style={{ flex: 1, marginLeft: spacing.md }}>
+        <View style={{ flexDirection: "row", alignItems: "center" }}>
+          <AppText weight="semibold" size="lg" style={{ flex: 1 }} numberOfLines={1}>{item.other?.name}</AppText>
+          <AppText size="sm" muted>{item.last_ts ? dayjs(item.last_ts).format("HH:mm") : ""}</AppText>
+        </View>
+        <View style={{ flexDirection: "row", alignItems: "center", marginTop: 3 }}>
+          <AppText muted size="base" style={{ flex: 1 }} numberOfLines={1}>{item.last_message || "Tap to start chatting"}</AppText>
+          {item.pinned && <Icon name="pin" size={14} color={c.onSurfaceMuted} />}
+          {item.unread > 0 && (
+            <View style={{ backgroundColor: c.brandPrimary, borderRadius: 11, minWidth: 22, height: 22, alignItems: "center", justifyContent: "center", paddingHorizontal: 6, marginLeft: 6 }}>
+              <AppText size="xs" weight="bold" color="#fff">{item.unread}</AppText>
+            </View>
+          )}
+        </View>
+      </View>
+    </Pressable>
+  );
 });

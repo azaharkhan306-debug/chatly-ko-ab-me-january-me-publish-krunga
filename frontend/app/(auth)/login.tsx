@@ -2,9 +2,9 @@ import { useState } from "react";
 import { View, KeyboardAvoidingView, Platform, ScrollView, Pressable } from "react-native";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { LinearGradient } from "expo-linear-gradient";
+import { Logo } from "@/src/Logo";
 import { useTheme, spacing } from "@/src/theme";
-import { AppText, Input, Button, useToast, Icon } from "@/src/ui";
+import { AppText, Input, Button, useToast } from "@/src/ui";
 import { useAuth } from "@/src/auth";
 import { LegalLinks } from "@/src/LegalDoc";
 
@@ -50,9 +50,9 @@ export default function Login() {
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={{ padding: spacing.xl, paddingTop: insets.top + spacing.xxl, flexGrow: 1 }} keyboardShouldPersistTaps="handled">
           <View style={{ alignItems: "center", marginBottom: spacing.xxl }}>
-            <LinearGradient colors={[colors.brandPrimary, colors.brandSecondary]} style={{ width: 72, height: 72, borderRadius: 22, alignItems: "center", justifyContent: "center", marginBottom: spacing.lg }}>
-              <Icon name="sparkles" size={34} color="#fff" />
-            </LinearGradient>
+            <View style={{ marginBottom: spacing.lg }}>
+              <Logo size={72} />
+            </View>
             <AppText size="xxl" weight="heavy">Chatly AI</AppText>
             <AppText muted style={{ marginTop: 4 }}>Your AI-native messenger</AppText>
           </View>

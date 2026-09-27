@@ -5,6 +5,7 @@ import { useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { useTheme, spacing, radius } from "@/src/theme";
+import { SwipeNav } from "@/src/SwipeNav";
 import { AppText, Avatar, Icon, EmptyState, useToast } from "@/src/ui";
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
@@ -70,6 +71,7 @@ export default function Status() {
   const others = feed.others || [];
 
   return (
+    <SwipeNav tab="status">
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
       <View style={{ paddingTop: insets.top + spacing.sm, paddingHorizontal: spacing.lg, paddingBottom: spacing.sm, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
         <AppText size="xxxl" weight="heavy">Status</AppText>
@@ -162,6 +164,7 @@ export default function Status() {
         </View>
       </Modal>
     </View>
+    </SwipeNav>
   );
 }
 

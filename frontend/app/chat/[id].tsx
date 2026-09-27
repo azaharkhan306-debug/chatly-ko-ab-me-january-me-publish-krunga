@@ -96,8 +96,14 @@ export default function ChatScreen() {
   const [brainOpen, setBrainOpen] = useState(false);
   const [aiResult, setAiResult] = useState<{ title: string; body: string; canReply?: boolean } | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
-  // Per-action language + tone selection
+  // Per-action language + tone selection. The language picker and the AI result
+  // are VIEW STATES inside the host modal (never a second sibling Modal) — on
+  // Android a Modal opened on top of another Modal dismisses the one below,
+  // which is what previously made the result sheet vanish before the answer
+  // arrived. One visible Modal at a time = deterministic flow.
   const [langSheet, setLangSheet] = useState<null | { action: string; scope: "message" | "brain" }>(null);
+  const [msgView, setMsgView] = useState<"actions" | "lang" | "result">("actions");
+  const [brainView, setBrainView] = useState<"actions" | "lang" | "result">("actions");
   const [aiLang, setAiLang] = useState("English");
   const [aiTone, setAiTone] = useState("friendly");
   const [langSearch, setLangSearch] = useState("");
@@ -213,6 +219,25 @@ export default function ChatScreen() {
 
   useEffect(() => { load(); }, [load]);
 
+  // --- Older-messages pagination (server supports limit + before cursor) ---
+  const [hasMore, setHasMore] = useState(true);
+  const loadingOlder = useRef(false);
+  const loadOlder = async () => {
+    if (loadingOlder.current || !hasMore || loading || messages.length === 0) return;
+    loadingOlder.current = true;
+    try {
+      const oldest = messages[0]?.created_at;
+      if (!oldest) return;
+      const res = await api.get<{ messages: Msg[] }>(`/chats/${id}/messages?limit=50&before=${encodeURIComponent(oldest)}`);
+      const older = (res.messages || []).filter((m) => !messages.some((x) => x.message_id === m.message_id));
+      if (!older.length) { setHasMore(false); return; }
+      // maintainVisibleContentPosition (native) keeps scroll anchored while prepending.
+      setMessages((prev) => [...older, ...prev.filter((p) => !older.some((o) => o.message_id === p.message_id))]);
+      if ((res.messages || []).length < 50) setHasMore(false);
+    } catch {}
+    finally { loadingOlder.current = false; }
+  };
+
   useEffect(() => subscribe((ev) => {
     if (ev.chat_id !== id) return;
     if (ev.type === "message") {
@@ -285,13 +310,13 @@ export default function ChatScreen() {
   const LANG_ACTIONS = ["translate", "summarize", "explain", "reply"];
 
   const startMsgAction = (action: string) => {
-    if (LANG_ACTIONS.includes(action)) { setLangSearch(""); setLangSheet({ action, scope: "message" }); }
+    if (LANG_ACTIONS.includes(action)) { setLangSearch(""); setLangSheet({ action, scope: "message" }); setMsgView("lang"); }
     else runMsgAction(action);
   };
 
   const runMsgAction = async (action: string, lang?: string, tone?: string) => {
     if (!selected) return;
-    setLangSheet(null);
+    setMsgView("result");
     setAiLoading(true);
     const titles: any = { explain: "Explanation", summarize: "Summary", translate: "Translation", reply: "Suggested Reply" };
     setAiResult({ title: titles[action] || "Chatly", body: "" });
@@ -317,12 +342,12 @@ export default function ChatScreen() {
   };
 
   const startBrain = (kind: string) => {
-    if (["summary", "important", "decisions"].includes(kind)) { setLangSearch(""); setLangSheet({ action: kind, scope: "brain" }); }
+    if (["summary", "important", "decisions"].includes(kind)) { setLangSearch(""); setLangSheet({ action: kind, scope: "brain" }); setBrainView("lang"); }
     else runBrain(kind);
   };
 
   const runBrain = async (kind: string, lang?: string) => {
-    setLangSheet(null);
+    setBrainView("result");
     setAiLoading(true);
     const t: any = { summary: "Summary", important: "Important Messages", timeline: "Timeline", pending: "Pending Replies", decisions: "Decisions" };
     setAiResult({ title: t[kind] || "Chatly", body: "" });
@@ -342,6 +367,67 @@ export default function ChatScreen() {
       track("ai_action_failed", { action: "brain_" + kind, reason: "error" });
     } finally { setAiLoading(false); }
   };
+
+  // --- Single-modal language flow helpers (fixes Android nested-Modal race) ---
+  const closeMsgModal = () => { setSelected(null); setAiResult(null); setMsgView("actions"); setLangSheet(null); setAiLoading(false); };
+  const closeBrainModal = () => { setBrainOpen(false); setAiResult(null); setBrainView("actions"); setLangSheet(null); setAiLoading(false); };
+
+  const pickLang = (l: string) => {
+    setAiLang(l); // stays selected — highlighted in the picker and shown while loading
+    const lg = l.startsWith("Hinglish") ? "Hinglish (write Hindi using Roman/English script)" : l;
+    if (langSheet?.scope === "brain") runBrain(langSheet.action, lg);
+    else runMsgAction(langSheet!.action, lg, aiTone);
+  };
+
+  // Re-open the language picker from the result view to re-run in another language.
+  const changeLang = () => {
+    setAiResult(null);
+    if (langSheet?.scope === "brain") setBrainView("lang"); else setMsgView("lang");
+  };
+
+  // Shared language picker rendered INSIDE the host modal (never a second Modal).
+  const renderLangPicker = () => (
+    <View>
+      <View style={{ flexDirection: "row", alignItems: "center", marginBottom: spacing.sm }}>
+        <Icon name="language-outline" size={18} color={colors.brandPrimary} />
+        <AppText weight="bold" size="lg" style={{ marginLeft: 8, flex: 1 }}>
+          {langSheet?.action === "translate" ? "Translate to" : "Output language"}
+        </AppText>
+        <Pressable onPress={() => { if (langSheet?.scope === "brain") { setBrainView("actions"); } else { setMsgView("actions"); } setLangSheet(null); }}>
+          <Icon name="close" size={22} />
+        </Pressable>
+      </View>
+
+      {langSheet?.action === "reply" && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: spacing.sm }} contentContainerStyle={{ gap: spacing.sm }}>
+          {TONES.map((t) => (
+            <Pressable key={t} testID={`tone-${t}`} onPress={() => setAiTone(t)} style={{ paddingHorizontal: spacing.md, paddingVertical: 8, borderRadius: radius.pill, borderWidth: 1, borderColor: aiTone === t ? colors.brandPrimary : colors.border, backgroundColor: aiTone === t ? colors.brandTertiary : "transparent" }}>
+              <AppText size="sm" weight="semibold" color={aiTone === t ? colors.onBrandTertiary : colors.onSurface} style={{ textTransform: "capitalize" }}>{t}</AppText>
+            </Pressable>
+          ))}
+        </ScrollView>
+      )}
+
+      <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: colors.surfaceTertiary, borderRadius: radius.md, paddingHorizontal: spacing.md, height: 44, marginBottom: spacing.sm }}>
+        <Icon name="search" size={16} color={colors.onSurfaceMuted} />
+        <TextInput testID="lang-search" value={langSearch} onChangeText={setLangSearch} placeholder="Search language" placeholderTextColor={colors.onSurfaceMuted} autoCapitalize="none" style={{ flex: 1, marginLeft: 8, color: colors.onSurface, fontSize: fontSize.base }} />
+      </View>
+
+      <ScrollView style={{ maxHeight: 300 }} keyboardShouldPersistTaps="handled">
+        {LANGUAGES.filter((l) => l.toLowerCase().includes(langSearch.trim().toLowerCase())).map((l) => (
+          <Pressable
+            key={l}
+            testID={`lang-${l}`}
+            onPress={() => pickLang(l)}
+            style={[styles.actionRow, { justifyContent: "space-between" }]}
+          >
+            <AppText weight="medium">{l}</AppText>
+            {aiLang === l && <Icon name="checkmark" size={18} color={colors.brandPrimary} />}
+          </Pressable>
+        ))}
+      </ScrollView>
+    </View>
+  );
 
   const createTaskFromMsg = async () => {
     if (!selected) return;
@@ -491,7 +577,7 @@ export default function ChatScreen() {
     const reactionList = Object.values(item.reactions || {});
     return (
       <Pressable
-        onLongPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy); setSelected(item); }}
+        onLongPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy); setSelected(item); setMsgView("actions"); setAiResult(null); }}
         style={{ alignItems: mine ? "flex-end" : "flex-start", marginVertical: 3, paddingHorizontal: spacing.md }}
       >
         <View style={[styles.bubble, {
@@ -570,7 +656,7 @@ export default function ChatScreen() {
         <Pressable testID="video-call-button" onPress={() => startCall(String(id), String(name), "video")} style={{ width: 38, height: 40, alignItems: "center", justifyContent: "center" }}>
           <Icon name="videocam" size={22} color={colors.brandPrimary} />
         </Pressable>
-        <Pressable testID="chat-brain-button" onPress={() => { setBrainOpen(true); setAiResult(null); }} style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center" }}>
+        <Pressable testID="chat-brain-button" onPress={() => { setBrainOpen(true); setBrainView("actions"); setAiResult(null); }} style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center" }}>
           <Icon name="sparkles" size={19} color={colors.brandPrimary} />
         </Pressable>
         {!isGroup && (
@@ -599,6 +685,8 @@ export default function ChatScreen() {
             contentContainerStyle={{ paddingVertical: spacing.md, flexGrow: 1 }}
             onScroll={onListScroll}
             scrollEventThrottle={16}
+            onStartReached={loadOlder}
+            onEndReachedThreshold={0.2}
             onContentSizeChange={() => {
               // Open the chat at the latest message on first render, and keep it pinned
               // to the bottom while the user is already there.
@@ -679,23 +767,41 @@ export default function ChatScreen() {
         )}
       </KeyboardAvoidingView>
 
-      {/* Message action sheet */}
-      <Modal visible={!!selected} transparent animationType="slide" onRequestClose={() => setSelected(null)}>
-        <Pressable style={{ flex: 1, backgroundColor: colors.overlay }} onPress={() => { setSelected(null); setAiResult(null); }} />
+      {/* Message action sheet — actions / language / result are views in ONE modal */}
+      <Modal visible={!!selected} transparent animationType="slide" onRequestClose={closeMsgModal}>
+        <Pressable style={{ flex: 1, backgroundColor: colors.overlay }} onPress={closeMsgModal} />
         <View style={[styles.sheet, { backgroundColor: colors.card, paddingBottom: insets.bottom + spacing.lg }]}>
-          {aiResult ? (
+          {msgView === "lang" ? (
+            renderLangPicker()
+          ) : msgView === "result" && aiResult ? (
             <ScrollView style={{ maxHeight: 420 }}>
               <View style={{ flexDirection: "row", alignItems: "center", marginBottom: spacing.md }}>
                 <Icon name="sparkles" size={18} color={colors.brandPrimary} />
                 <AppText weight="bold" size="lg" style={{ marginLeft: 8, flex: 1 }}>{aiResult.title}</AppText>
-                <Pressable onPress={() => setAiResult(null)}><Icon name="close" size={22} /></Pressable>
+                <Pressable onPress={closeMsgModal}><Icon name="close" size={22} /></Pressable>
               </View>
-              {aiLoading ? <ActivityIndicator color={colors.brandPrimary} style={{ marginVertical: spacing.xl }} /> : (
+              {langSheet && !aiLoading && !!aiResult.body && !aiResult.body.startsWith("Couldn't") && (
+                <View style={{ flexDirection: "row", alignItems: "center", marginBottom: spacing.sm }}>
+                  <Icon name="language-outline" size={14} color={colors.onSurfaceMuted} />
+                  <AppText size="sm" muted style={{ marginLeft: 6 }}>Language: {aiLang}</AppText>
+                </View>
+              )}
+              {aiLoading ? (
+                <View style={{ alignItems: "center", marginVertical: spacing.xl }}>
+                  <ActivityIndicator color={colors.brandPrimary} />
+                  <AppText size="sm" muted style={{ marginTop: spacing.md }}>Generating in {aiLang}…</AppText>
+                </View>
+              ) : (
                 <AppText size="md" style={{ lineHeight: 22 }}>{aiResult.body}</AppText>
               )}
               {aiResult.canReply && !aiLoading && (
-                <Pressable testID="use-as-reply" onPress={() => { setText(aiResult.body); setSelected(null); setAiResult(null); }} style={{ marginTop: spacing.lg, backgroundColor: colors.brandPrimary, height: 48, borderRadius: radius.md, alignItems: "center", justifyContent: "center" }}>
+                <Pressable testID="use-as-reply" onPress={() => { setText(aiResult.body); closeMsgModal(); }} style={{ marginTop: spacing.lg, backgroundColor: colors.brandPrimary, height: 48, borderRadius: radius.md, alignItems: "center", justifyContent: "center" }}>
                   <AppText weight="bold" color="#fff">Use as reply</AppText>
+                </Pressable>
+              )}
+              {langSheet && !aiLoading && (
+                <Pressable testID="change-language" onPress={changeLang} style={{ marginTop: spacing.md, alignItems: "center" }}>
+                  <AppText weight="semibold" color={colors.brandPrimary}>Change language & retry</AppText>
                 </Pressable>
               )}
             </ScrollView>
@@ -745,53 +851,6 @@ export default function ChatScreen() {
         </View>
       </Modal>
 
-      {/* Per-action language + tone picker */}
-      <Modal visible={!!langSheet} transparent animationType="slide" onRequestClose={() => setLangSheet(null)}>
-        <Pressable style={{ flex: 1, backgroundColor: colors.overlay }} onPress={() => setLangSheet(null)} />
-        <View style={[styles.sheet, { backgroundColor: colors.card, paddingBottom: insets.bottom + spacing.lg }]}>
-          <View style={{ flexDirection: "row", alignItems: "center", marginBottom: spacing.sm }}>
-            <Icon name="language-outline" size={18} color={colors.brandPrimary} />
-            <AppText weight="bold" size="lg" style={{ marginLeft: 8, flex: 1 }}>
-              {langSheet?.action === "translate" ? "Translate to" : "Output language"}
-            </AppText>
-            <Pressable onPress={() => setLangSheet(null)}><Icon name="close" size={22} /></Pressable>
-          </View>
-
-          {langSheet?.action === "reply" && (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: spacing.sm }} contentContainerStyle={{ gap: spacing.sm }}>
-              {TONES.map((t) => (
-                <Pressable key={t} testID={`tone-${t}`} onPress={() => setAiTone(t)} style={{ paddingHorizontal: spacing.md, paddingVertical: 8, borderRadius: radius.pill, borderWidth: 1, borderColor: aiTone === t ? colors.brandPrimary : colors.border, backgroundColor: aiTone === t ? colors.brandTertiary : "transparent" }}>
-                  <AppText size="sm" weight="semibold" color={aiTone === t ? colors.onBrandTertiary : colors.onSurface} style={{ textTransform: "capitalize" }}>{t}</AppText>
-                </Pressable>
-              ))}
-            </ScrollView>
-          )}
-
-          <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: colors.surfaceTertiary, borderRadius: radius.md, paddingHorizontal: spacing.md, height: 44, marginBottom: spacing.sm }}>
-            <Icon name="search" size={16} color={colors.onSurfaceMuted} />
-            <TextInput testID="lang-search" value={langSearch} onChangeText={setLangSearch} placeholder="Search language" placeholderTextColor={colors.onSurfaceMuted} autoCapitalize="none" style={{ flex: 1, marginLeft: 8, color: colors.onSurface, fontSize: fontSize.base }} />
-          </View>
-
-          <ScrollView style={{ maxHeight: 300 }} keyboardShouldPersistTaps="handled">
-            {LANGUAGES.filter((l) => l.toLowerCase().includes(langSearch.trim().toLowerCase())).map((l) => (
-              <Pressable
-                key={l}
-                testID={`lang-${l}`}
-                onPress={() => {
-                  setAiLang(l);
-                  const lg = l.startsWith("Hinglish") ? "Hinglish (write Hindi using Roman/English script)" : l;
-                  if (langSheet?.scope === "brain") runBrain(langSheet.action, lg);
-                  else runMsgAction(langSheet!.action, lg, aiTone);
-                }}
-                style={[styles.actionRow, { justifyContent: "space-between" }]}
-              >
-                <AppText weight="medium">{l}</AppText>
-                {aiLang === l && <Icon name="checkmark" size={18} color={colors.brandPrimary} />}
-              </Pressable>
-            ))}
-          </ScrollView>
-        </View>
-      </Modal>
       <Modal visible={attachOpen} transparent animationType="slide" onRequestClose={() => setAttachOpen(false)}>
         <Pressable style={{ flex: 1, backgroundColor: colors.overlay }} onPress={() => setAttachOpen(false)} />
         <View style={[styles.sheet, { backgroundColor: colors.card, paddingBottom: insets.bottom + spacing.lg }]}>
@@ -813,32 +872,60 @@ export default function ChatScreen() {
         </View>
       </Modal>
 
-      {/* Chat brain sheet */}
-      <Modal visible={brainOpen} transparent animationType="slide" onRequestClose={() => setBrainOpen(false)}>
-        <Pressable style={{ flex: 1, backgroundColor: colors.overlay }} onPress={() => setBrainOpen(false)} />
+      {/* Chat brain sheet — actions / language / result are views in ONE modal */}
+      <Modal visible={brainOpen} transparent animationType="slide" onRequestClose={closeBrainModal}>
+        <Pressable style={{ flex: 1, backgroundColor: colors.overlay }} onPress={closeBrainModal} />
         <View style={[styles.sheet, { backgroundColor: colors.card, paddingBottom: insets.bottom + spacing.lg }]}>
-          <View style={{ flexDirection: "row", alignItems: "center", marginBottom: spacing.md }}>
-            <Icon name="sparkles" size={20} color={colors.brandPrimary} />
-            <AppText weight="bold" size="lg" style={{ marginLeft: 8, flex: 1 }}>Ask Chatly about this chat</AppText>
-            <Pressable onPress={() => setBrainOpen(false)}><Icon name="close" size={22} /></Pressable>
-          </View>
-          {aiResult ? (
+          {brainView === "lang" ? (
+            renderLangPicker()
+          ) : brainView === "result" && aiResult ? (
             <ScrollView style={{ maxHeight: 420 }}>
-              <AppText weight="bold" size="md" color={colors.brandPrimary} style={{ marginBottom: spacing.sm }}>{aiResult.title}</AppText>
-              {aiLoading ? <ActivityIndicator color={colors.brandPrimary} style={{ marginVertical: spacing.xl }} /> : <AppText size="md" style={{ lineHeight: 22 }}>{aiResult.body}</AppText>}
-              <Pressable onPress={() => setAiResult(null)} style={{ marginTop: spacing.lg }}><AppText weight="bold" color={colors.brandPrimary}>← Back to actions</AppText></Pressable>
+              <View style={{ flexDirection: "row", alignItems: "center", marginBottom: spacing.sm }}>
+                <Icon name="sparkles" size={18} color={colors.brandPrimary} />
+                <AppText weight="bold" size="lg" style={{ marginLeft: 8, flex: 1 }}>{aiResult.title}</AppText>
+                <Pressable onPress={closeBrainModal}><Icon name="close" size={22} /></Pressable>
+              </View>
+              {langSheet && !aiLoading && !!aiResult.body && !aiResult.body.startsWith("Couldn't") && (
+                <View style={{ flexDirection: "row", alignItems: "center", marginBottom: spacing.sm }}>
+                  <Icon name="language-outline" size={14} color={colors.onSurfaceMuted} />
+                  <AppText size="sm" muted style={{ marginLeft: 6 }}>Language: {aiLang}</AppText>
+                </View>
+              )}
+              {aiLoading ? (
+                <View style={{ alignItems: "center", marginVertical: spacing.xl }}>
+                  <ActivityIndicator color={colors.brandPrimary} />
+                  <AppText size="sm" muted style={{ marginTop: spacing.md }}>Generating in {aiLang}…</AppText>
+                </View>
+              ) : (
+                <AppText size="md" style={{ lineHeight: 22 }}>{aiResult.body}</AppText>
+              )}
+              {langSheet && !aiLoading && (
+                <Pressable testID="brain-change-language" onPress={changeLang} style={{ marginTop: spacing.md, alignItems: "center" }}>
+                  <AppText weight="semibold" color={colors.brandPrimary}>Change language & retry</AppText>
+                </Pressable>
+              )}
+              <Pressable onPress={() => { setBrainView("actions"); setAiResult(null); }} style={{ marginTop: spacing.md, alignItems: "center" }}>
+                <AppText weight="bold" color={colors.brandPrimary}>← Back to actions</AppText>
+              </Pressable>
             </ScrollView>
           ) : (
-            <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
-              {BRAIN_ACTIONS.map((a) => (
-                <Pressable key={a.key} testID={`brain-${a.key}`} onPress={() => startBrain(a.key)} style={{ width: "50%", padding: spacing.xs }}>
-                  <View style={{ borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: spacing.md, flexDirection: "row", alignItems: "center" }}>
-                    <Icon name={a.icon as any} size={20} color={colors.brandPrimary} />
-                    <AppText weight="semibold" style={{ marginLeft: 8 }} numberOfLines={1}>{a.label}</AppText>
-                  </View>
-                </Pressable>
-              ))}
-            </View>
+            <>
+              <View style={{ flexDirection: "row", alignItems: "center", marginBottom: spacing.md }}>
+                <Icon name="sparkles" size={20} color={colors.brandPrimary} />
+                <AppText weight="bold" size="lg" style={{ marginLeft: 8, flex: 1 }}>Ask Chatly about this chat</AppText>
+                <Pressable onPress={closeBrainModal}><Icon name="close" size={22} /></Pressable>
+              </View>
+              <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+                {BRAIN_ACTIONS.map((a) => (
+                  <Pressable key={a.key} testID={`brain-${a.key}`} onPress={() => startBrain(a.key)} style={{ width: "50%", padding: spacing.xs }}>
+                    <View style={{ borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: spacing.md, flexDirection: "row", alignItems: "center" }}>
+                      <Icon name={a.icon as any} size={20} color={colors.brandPrimary} />
+                      <AppText weight="semibold" style={{ marginLeft: 8 }} numberOfLines={1}>{a.label}</AppText>
+                    </View>
+                  </Pressable>
+                ))}
+              </View>
+            </>
           )}
         </View>
       </Modal>

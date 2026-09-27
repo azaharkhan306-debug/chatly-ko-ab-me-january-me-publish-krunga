@@ -4,6 +4,7 @@ import { useRouter } from "expo-router";
 import { useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme, spacing, radius } from "@/src/theme";
+import { SwipeNav } from "@/src/SwipeNav";
 import { AppText, Avatar, Icon, Card, SettingRow, Input, Button, useToast } from "@/src/ui";
 import { useAuth } from "@/src/auth";
 import { api } from "@/src/api";
@@ -122,6 +123,7 @@ export default function Profile() {
   const modes: any[] = [["light", "sunny-outline"], ["dark", "moon-outline"], ["system", "contrast-outline"]];
 
   return (
+    <SwipeNav tab="profile">
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
       <ScrollView contentContainerStyle={{ paddingBottom: spacing.xxl }}>
         <View style={{ alignItems: "center", paddingTop: insets.top + spacing.lg, paddingBottom: spacing.lg }}>
@@ -241,6 +243,7 @@ export default function Profile() {
         </View>
       </Modal>
     </View>
+    </SwipeNav>
   );
 }
 

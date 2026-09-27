@@ -31,6 +31,8 @@ export function WsProvider({ children }: { children: React.ReactNode }) {
 
   const connect = useCallback(() => {
     if (!token) return;
+    // Drop any half-open socket before dialing again.
+    try { if (wsRef.current) { const old = wsRef.current; old.onclose = null; old.close(); } } catch {}
     try {
       const ws = new WebSocket(wsUrl(token));
       wsRef.current = ws;
@@ -68,6 +70,26 @@ export function WsProvider({ children }: { children: React.ReactNode }) {
       wsRef.current = null;
       setOnline(false);
     };
+  }, [token, connect]);
+
+  // Instant reconnect when the network comes back (Wi-Fi <-> data switch, flight
+  // mode off) instead of waiting for the next 2.5s retry timer to fire.
+  useEffect(() => {
+    if (!token) return;
+    let NetInfo: any = null;
+    try { NetInfo = require("@react-native-community/netinfo"); } catch {}
+    if (!NetInfo) return;
+    const unsub = NetInfo.addEventListener((state: any) => {
+      const reachable = !!state?.isInternetReachable;
+      if (reachable && shouldConnect.current) {
+        const socketOpen = wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING;
+        if (!socketOpen) {
+          if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
+          connect();
+        }
+      }
+    });
+    return () => { try { unsub(); } catch {} };
   }, [token, connect]);
 
   const subscribe = useCallback((fn: Listener) => {

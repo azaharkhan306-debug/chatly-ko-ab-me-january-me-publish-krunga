@@ -4,6 +4,7 @@ import { useRouter } from "expo-router";
 import { useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme, spacing, radius } from "@/src/theme";
+import { SwipeNav } from "@/src/SwipeNav";
 import { AppText, Avatar, Icon, EmptyState, Loading } from "@/src/ui";
 import { api } from "@/src/api";
 import { useCall } from "@/src/calls";
@@ -32,6 +33,7 @@ export default function Calls() {
   };
 
   return (
+    <SwipeNav tab="calls">
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
       <View style={{ paddingTop: insets.top + spacing.sm, paddingHorizontal: spacing.lg, paddingBottom: spacing.sm }}>
         <AppText size="xxxl" weight="heavy">Calls</AppText>
@@ -64,6 +66,7 @@ export default function Calls() {
         </ScrollView>
       )}
     </View>
+    </SwipeNav>
   );
 }
 

@@ -2,7 +2,7 @@ import uuid
 import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Depends, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from db import db
 from security import get_current_user
@@ -121,6 +121,22 @@ class MsgActionBody(BaseModel):
     target_lang: str | None = None   # translation target
     out_lang: str | None = None      # per-action output language for summarize/explain/reply
     context: str | None = None       # recent conversation context for reply drafts
+
+    @field_validator("text")
+    @classmethod
+    def _text_required(cls, v: str) -> str:
+        # Reject blank input immediately (422) instead of burning the full
+        # retry/backoff chain on a request that can never succeed.
+        if not (v or "").strip():
+            raise ValueError("text cannot be empty")
+        return v[:20000]
+
+    @field_validator("action")
+    @classmethod
+    def _action_required(cls, v: str) -> str:
+        if not (v or "").strip():
+            raise ValueError("action cannot be empty")
+        return v.strip()
 
 
 @router.post("/message-action")

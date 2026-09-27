@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme, spacing, radius, fontSize } from "@/src/theme";
 import { AppText, Icon, useToast } from "@/src/ui";
 import { StackHeader } from "@/src/Header";
+import { Logo } from "@/src/Logo";
 import { api } from "@/src/api";
 
 type Turn = { role: "user" | "assistant"; text: string; id: string; action?: any };
@@ -101,14 +102,12 @@ export default function Assistant() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
-      <StackHeader title="Chatly" subtitle="AI Assistant" right={<Icon name="sparkles" size={22} color={colors.brandPrimary} />} />
+      <StackHeader title="Chatly" subtitle="AI Assistant" right={<Logo size={24} />} />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior="translate-with-padding" keyboardVerticalOffset={0}>
         {turns.length === 0 ? (
           <ScrollView contentContainerStyle={{ padding: spacing.xl, flexGrow: 1, justifyContent: "center" }}>
             <View style={{ alignItems: "center", marginBottom: spacing.xl }}>
-              <View style={{ width: 72, height: 72, borderRadius: 22, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center" }}>
-                <Icon name="sparkles" size={34} color={colors.brandPrimary} />
-              </View>
+              <Logo size={72} />
               <AppText size="xl" weight="bold" style={{ marginTop: spacing.md }}>How can I help?</AppText>
               <AppText muted center style={{ marginTop: 4 }}>Ask anything in English, Hindi or Hinglish</AppText>
             </View>
