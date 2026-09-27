@@ -11,7 +11,7 @@ import base64
 from datetime import datetime, timedelta
 
 # Backend URL from frontend/.env
-BACKEND_URL = "https://90774b00-a583-44da-885d-fe8fec1ccd0d.preview.emergentagent.com/api"
+BACKEND_URL = "https://chatly-preview.preview.emergentagent.com/api"
 
 # Test credentials
 DEMO_EMAIL = "demo@chatly.app"

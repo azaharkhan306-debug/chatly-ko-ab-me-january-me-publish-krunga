@@ -11,7 +11,7 @@ import re
 import subprocess
 
 # Configuration
-BACKEND_URL = "https://chatly-staging-1.preview.emergentagent.com/api"
+BACKEND_URL = "https://chatly-preview.preview.emergentagent.com/api"
 TEST_EMAIL = "demo@chatly.app"
 TEST_PASSWORD = "Demo1234"
 
