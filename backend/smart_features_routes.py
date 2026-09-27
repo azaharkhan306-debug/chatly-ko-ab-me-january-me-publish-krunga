@@ -149,7 +149,9 @@ class DigestBody(BaseModel):
 async def chat_digest(body: DigestBody, user: dict = Depends(get_current_user)):
     hours = 24 if body.period == "daily" else 168
     since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
-    cur = db.messages.find({"created_at": {"$gte": since}, "deleted": {"$ne": True}}, {"_id": 0, "chat_id": 1, "sender_id": 1, "text": 1, "created_at": 1}).sort("created_at", -1).limit(300)
+    # Cap the context at 80 recent messages: keeps Sarvam fast (<30s) while
+    # still capturing the day's substance. 300 messages made the model time out.
+    cur = db.messages.find({"created_at": {"$gte": since}, "deleted": {"$ne": True}}, {"_id": 0, "chat_id": 1, "sender_id": 1, "text": 1, "created_at": 1}).sort("created_at", -1).limit(80)
     rows = [m async for m in cur]
     context = "\n".join(f"{m.get('chat_id')}: {m.get('text','')}" for m in rows) or "No messages in this period."
     digest = await ai_json("Create a faithful chat digest. Return {important_conversations, pending_replies, tasks, decisions, follow_ups}. Arrays only; no invented facts.", context, max_tokens=1600)

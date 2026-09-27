@@ -24,6 +24,9 @@ TAVILY_API_KEY = os.environ["TAVILY_API_KEY"]
 TAVILY_URL = "https://api.tavily.com/search"
 EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY")
 
+# Emergent universal LLM fallback (server-side only; text generation).
+_EMERGENT_PROVIDER_MODEL = ("openai", "gpt-5.4")
+
 # Retry policy: attempt 1 immediate, then 1s, 2s, 4s, 8s before attempts 2..5.
 MAX_ATTEMPTS = 5
 BACKOFF_DELAYS = [0, 1, 2, 4, 8]
@@ -192,13 +195,46 @@ async def _sarvam_chat(messages: list[dict], temperature: float = 0.5, max_token
     return await _run_with_retry("sarvam", _do)
 
 
+async def _emergent_chat(system: str, prompt: str, temperature: float = 0.5, max_tokens: int = 1200) -> str:
+    """Emergent universal LLM fallback (gpt-5.4 via the universal key). Returns ''
+    on any failure so the caller can raise the original user-safe error."""
+    if not EMERGENT_LLM_KEY:
+        return ""
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id="chatly-fallback-" + uuid.uuid4().hex[:10],
+            system_message=system or "You are Chatly, a helpful AI assistant.",
+        ).with_model(*_EMERGENT_PROVIDER_MODEL)
+        out = await chat.send_message(UserMessage(text=prompt))
+        return (out or "").strip()
+    except Exception as e:  # noqa: BLE001 - fallback must never crash the request path
+        logger.warning(f"[AI] provider=emergent outcome=error err={str(e)[:160]}")
+        return ""
+
+
 async def ai_chat(messages: list[dict], temperature: float = 0.5, max_tokens: int = 1200) -> str:
-    """Sarvam AI only — no cross-provider fallback. Retries with headroom on empty completions."""
-    out = await _sarvam_chat(messages, temperature, max_tokens)
-    if not out:  # reasoning consumed budget — retry once with more headroom
-        out = await _sarvam_chat(messages, temperature, max_tokens + 2000)
+    """Sarvam AI primary, Emergent universal LLM fallback. Retries with headroom
+    on empty completions (reasoning models can burn the token budget on thinking)."""
+    out = ""
+    try:
+        out = await _sarvam_chat(messages, temperature, max_tokens)
+        if not out:  # reasoning consumed budget — retry once with more headroom
+            out = await _sarvam_chat(messages, temperature, max_tokens + 2000)
+    except AIServiceError as e:
+        logger.warning(f"[AI] fallback provider=emergent reason={e.category}")
+        out = ""
     if out:
         return out
+    # Real cross-provider fallback: Emergent universal LLM answers when Sarvam
+    # is empty/unhealthy so features never hard-fail on one provider.
+    system = next((m.get("content", "") for m in messages if m.get("role") == "system"), "")
+    user = "\n\n".join(m.get("content", "") for m in messages if m.get("role") != "system")
+    emergent_out = await _emergent_chat(system, user, temperature, max_tokens)
+    if emergent_out:
+        logger.info("[AI] fallback provider=emergent outcome=success")
+        return emergent_out
     raise AIServiceError(
         "Chatly AI could not produce a response. Please try again.",
         category="empty_response", provider="sarvam",
@@ -214,14 +250,23 @@ async def ai_complete(system: str, prompt: str, temperature: float = 0.5, max_to
 
 
 async def ai_json(system: str, prompt: str, max_tokens: int = 1500) -> dict | list:
-    """Ask the model for strict JSON and parse it defensively."""
+    """Ask the model for strict JSON and parse it defensively. Sarvam's reasoning
+    model is slow (30-70s) and often returns empty on JSON tasks — one attempt,
+    then straight to the Emergent fallback instead of burning the retry chain."""
     sys = system + "\n\nRespond with ONLY valid JSON. No markdown, no code fences, no commentary."
-    raw = await ai_chat(
-        [{"role": "system", "content": sys}, {"role": "user", "content": prompt}],
-        temperature=0.2,
-        max_tokens=max_tokens,
-    )
-    raw = raw.strip()
+    msgs = [{"role": "system", "content": sys}, {"role": "user", "content": prompt}]
+    raw = ""
+    try:
+        first = await _sarvam_chat(msgs, 0.2, max_tokens)
+        if first:
+            raw = first
+        else:
+            logger.warning("[AI] ai_json sarvam empty -> emergent fallback")
+            raw = await _emergent_chat(sys, prompt, 0.2, max_tokens)
+    except AIServiceError:
+        logger.warning("[AI] ai_json sarvam error -> emergent fallback")
+        raw = await _emergent_chat(sys, prompt, 0.2, max_tokens)
+    raw = (raw or "").strip()
     if raw.startswith("```"):
         raw = raw.split("```", 2)[1] if "```" in raw else raw
         raw = raw.replace("json", "", 1).strip() if raw.lstrip().startswith("json") else raw

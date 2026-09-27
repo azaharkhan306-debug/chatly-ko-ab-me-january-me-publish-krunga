@@ -73,45 +73,88 @@ async def transcribe_audio(audio_bytes: bytes, filename: str, language: str = "a
             Path(tmp_name).unlink(missing_ok=True)
 
 
+SARVAM_DOC_AI_JOB_URL = "https://api.sarvam.ai/doc-ai/v1/job/digitise"
+SARVAM_DOC_AI_STATUS_URL = "https://api.sarvam.ai/doc-ai/v1/job/{job_id}/status"
+SARVAM_DOC_AI_RESULTS_URL = "https://api.sarvam.ai/doc-ai/v1/job/{job_id}/results"
+
+
 async def image_qa(image_bytes: bytes, mime_type: str, question: str) -> str:
-    """OCR / vision Q&A via Sarvam Vision. Understands English, Hindi and Hinglish."""
-    image_b64 = base64.b64encode(image_bytes).decode("ascii")
-    body = {
-        "image": f"data:{mime_type or 'image/jpeg'};base64,{image_b64}",
-        "prompt": (
-            "Analyze this user-provided image (screenshot, invoice, photo). Read all visible text "
-            "with OCR. Preserve numbers, dates and amounts exactly; never invent missing values. "
-            "You understand English, Hindi and Hinglish. Answer the user's question below.\n\n"
-            f"Question: {question}"
-        ),
-    }
-    # Sarvam Vision accepts either the bearer or api-subscription-key header depending on
-    # the account. Try the subscription-key header first (same as STT), then fall back.
-    headers_variants = [
-        {"api-subscription-key": SARVAM_API_KEY, "Content-Type": "application/json"},
-        {"Authorization": f"Bearer {SARVAM_API_KEY}", "Content-Type": "application/json"},
-    ]
-    last: httpx.Response | None = None
+    """OCR / document intelligence via Sarvam Document AI (Sarvam Vision 1.5,
+    `doc-ai/v1/job/digitise` — async job + polling; the old /v1/vision endpoint
+    was retired by the provider and returned 404). Understands English, Hindi
+    and Hinglish documents."""
+    headers = {"api-subscription-key": SARVAM_API_KEY}
+    ext = "png" if "png" in (mime_type or "") else "jpg"
     async with httpx.AsyncClient(timeout=90) as client:
-        for h in headers_variants:
-            resp = await client.post(SARVAM_VISION_URL, headers=h, json=body)
-            last = resp
-            if resp.status_code < 400:
-                data = resp.json()
-                for key in ("answer", "response", "text", "output"):
-                    if isinstance(data.get(key), str):
-                        return data[key].strip()
-                # Some responses may nest content under choices.
-                choices = data.get("choices")
-                if isinstance(choices, list) and choices:
-                    msg = choices[0].get("message") or {}
-                    if isinstance(msg.get("content"), str):
-                        return msg["content"].strip()
-                return str(data)[:2000]
-    if last is not None:
-        logger.warning("Sarvam Vision %s: %s", last.status_code, last.text[:200])
-        last.raise_for_status()
-    return ""
+        # 1. Start the digitise job (multipart: file + options).
+        resp = await client.post(
+            SARVAM_DOC_AI_JOB_URL,
+            headers=headers,
+            files={"file": (f"upload.{ext}", image_bytes, mime_type or "image/jpeg")},
+            data={"language": "en-IN", "output_format": "json", "model": "sarvam-vision-v1"},
+        )
+        if resp.status_code >= 400:
+            logger.warning("Sarvam DocAI digitise %s: %s", resp.status_code, resp.text[:200])
+            resp.raise_for_status()
+        job = resp.json()
+        job_id = job.get("job_id")
+        if not job_id:
+            return str(job)[:2000]
+
+        # 2. Poll until a terminal status (completed / partially_completed / failed / rejected).
+        status_payload: dict = {}
+        for _ in range(20):  # up to ~40s
+            st = await client.get(SARVAM_DOC_AI_STATUS_URL.format(job_id=job_id), headers=headers)
+            if st.status_code < 400:
+                status_payload = st.json() or {}
+                state = str(status_payload.get("status", "")).lower()
+                if state in ("completed", "partially_completed", "failed", "rejected"):
+                    break
+            await __import__("asyncio").sleep(2)
+
+        # 3. Fetch the digitised output: documents[].pages[].blocks[].text
+        #    sorted by reading_order (confirmed against the live API).
+        doc_text = ""
+        try:
+            rres = await client.get(SARVAM_DOC_AI_RESULTS_URL.format(job_id=job_id), headers=headers)
+            if rres.status_code < 400:
+                rdata = rres.json() or {}
+                lines: list[tuple[int, str]] = []
+                for doc in rdata.get("documents") or []:
+                    for page in doc.get("pages") or []:
+                        for blk in page.get("blocks") or []:
+                            txt = (blk.get("text") or "").strip()
+                            if txt:
+                                lines.append((int(blk.get("reading_order") or 0), txt))
+                lines.sort(key=lambda x: x[0])
+                doc_text = "\n".join(t for _, t in lines).strip()
+                if not doc_text:
+                    doc_text = str(rdata.get("output") or rdata.get("markdown") or "")[:4000]
+        except Exception as e:  # noqa: BLE001
+            logger.debug("DocAI results fetch failed: %s", e)
+        if not doc_text and isinstance(status_payload, dict):
+            out = status_payload.get("output") or status_payload.get("result") or ""
+            if isinstance(out, str):
+                doc_text = out[:4000]
+
+        if not doc_text:
+            state = str(status_payload.get("status", "unknown"))
+            raise RuntimeError(f"Sarvam DocAI job did not complete (status={state})")
+
+        # 4. Answer the caller's question over the extracted text using the text LLM
+        #    (Document AI extracts; the question may ask for interpretation).
+        q = (question or "").strip()
+        if q and q.lower() not in ("ocr", "extract text", "read the text"):
+            from ai_service import ai_chat
+            answer = await ai_chat(
+                [
+                    {"role": "system", "content": "You analyze extracted document text (screenshots, invoices, receipts). Read numbers, dates and amounts exactly; never invent values. You understand English, Hindi and Hinglish."},
+                    {"role": "user", "content": f"Document text:\n{doc_text[:6000]}\n\nQuestion: {q}"},
+                ],
+                temperature=0.3, max_tokens=900,
+            )
+            return answer
+        return doc_text
 
 
 def extract_document_text(data: bytes, filename: str, mime: str) -> str:

@@ -88,7 +88,11 @@ async function request<T = any>(
   }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeout);
+  // AI generation endpoints get a longer ceiling: worst case is Sarvam's retry
+  // chain plus the Emergent fallback answering.
+  const aiHeavy = path.startsWith("/ai/") || path.startsWith("/insights/");
+  const effectiveTimeout = Math.max(timeout, aiHeavy ? 180000 : 0);
+  const timer = setTimeout(() => controller.abort(), effectiveTimeout);
 
   let res: Response;
   try {

@@ -9,6 +9,7 @@ import { AppText, Avatar, Icon, EmptyState, Skeleton } from "@/src/ui";
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { useWs } from "@/src/ws";
+import { storage } from "@/src/utils/storage";
 import dayjs from "dayjs";
 
 type Chat = {
@@ -40,19 +41,46 @@ export default function Chats() {
   };
 
   const load = useCallback(async () => {
-    try {
-      setError(false);
-      const res = await api.get<{ chats: Chat[] }>("/chats");
-      setChats(res.chats);
-    } catch {
-      setError(true);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+    setError(false);
+    // Hydrate the cached list instantly so the screen never shows a
+    // "check connection" dead-end when the request is merely slow.
+    if (!chats.length) {
+      const cached = await storage.getItem<Chat[] | null>("chatly_chats_cache", null);
+      if (cached?.length) { setChats(cached); setLoading(false); }
     }
-  }, []);
+    // Retry network/timeout failures automatically (2 extra attempts).
+    let lastErr: any = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const res = await api.get<{ chats: Chat[] }>("/chats");
+        setChats(res.chats);
+        storage.setItem("chatly_chats_cache", res.chats as any);
+        setError(false);
+        setLoading(false); setRefreshing(false);
+        return;
+      } catch (e: any) {
+        lastErr = e;
+        const transient = !e?.status || e.category === "network" || e.category === "timeout";
+        if (!transient || attempt === 2) break;
+        await new Promise((r) => setTimeout(r, 900 * (attempt + 1)));
+      }
+    }
+    if (lastErr) setError(true);
+    setLoading(false); setRefreshing(false);
+  }, [chats.length]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  // Auto-reload when the network returns (Wi-Fi <-> data switches, flight mode).
+  useEffect(() => {
+    let NetInfo: any = null;
+    try { NetInfo = require("@react-native-community/netinfo"); } catch {}
+    if (!NetInfo?.addEventListener) return;
+    const unsub = NetInfo.addEventListener((state: any) => {
+      if (state?.isInternetReachable) load();
+    });
+    return () => { try { unsub(); } catch {} };
+  }, [load]);
 
   // Realtime updates: patch the affected row IN PLACE instead of refetching the
   // whole list on every incoming message (the old behaviour made one full

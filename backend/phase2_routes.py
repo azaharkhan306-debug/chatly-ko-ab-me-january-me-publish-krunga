@@ -246,7 +246,13 @@ async def ai_vision(file: UploadFile = File(...), kind: str = Form("generic"),
         "generic": prompt or "Describe what you see in this image faithfully. Never invent facts.",
     }
     q = kind_prompts[kind]
-    text = await image_qa(data, file.content_type or "image/jpeg", q)
+    try:
+        text = await image_qa(data, file.content_type or "image/jpeg", q)
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001 - surface a clean, user-safe error
+        logger.warning("vision failed: %s", str(e)[:200])
+        raise HTTPException(status_code=502, detail="Vision service is temporarily unavailable. Please try again.")
     # Try JSON-parse the vision output when appropriate; keep raw string otherwise.
     parsed: Any = None
     if kind in ("screenshot", "receipt", "business_card"):

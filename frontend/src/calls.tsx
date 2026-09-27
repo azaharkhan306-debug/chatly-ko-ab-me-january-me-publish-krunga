@@ -27,6 +27,15 @@ const Ctx = createContext<CallCtx>({ startCall: async () => {} });
 const BASE = (process.env.EXPO_PUBLIC_BACKEND_URL || "") + "/api";
 const CHUNK_MS = 8000;
 
+// Push-notification bridge: the notification router (root layout) calls
+// presentIncomingCallFromPush() when an incoming-call push is tapped — including
+// cold starts (app was closed). The mounted CallProvider registers the hook.
+let incomingCallHook: ((call: any) => void) | null = null;
+export function presentIncomingCallFromPush(data: any) {
+  if (incomingCallHook) { incomingCallHook(data); return true; }
+  return false;
+}
+
 export function CallProvider({ children }: { children: React.ReactNode }) {
   const { colors } = useTheme();
   const router = useRouter();
@@ -255,16 +264,28 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     startTranscription();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ---- Incoming call presenter (shared by WS events and push-notification taps) ----
+  const showIncoming = useCallback((incoming: any) => {
+    if (!incoming?.call_id) return;
+    roleRef.current = "callee";
+    setCall(incoming); callRef.current = incoming; setPhase("incoming"); phaseRef.current = "incoming";
+    setSpeaker(incoming?.type === "video"); speakerRef.current = incoming?.type === "video";
+    setCamOff(incoming?.type !== "video");
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+    startRingtone().catch(() => {});
+  }, []);
+
+  // Register the push-notification bridge while the provider is mounted.
+  useEffect(() => {
+    incomingCallHook = showIncoming;
+    return () => { incomingCallHook = null; };
+  }, [showIncoming]);
+
   useEffect(() => subscribe(async (ev) => {
     const c = callRef.current;
     if (ev.type === "incoming_call") {
       if (c) return; // already in a call; let the caller time out
-      roleRef.current = "callee";
-      setCall(ev.call); callRef.current = ev.call; setPhase("incoming"); phaseRef.current = "incoming";
-      setSpeaker(ev.call?.type === "video"); speakerRef.current = ev.call?.type === "video";
-      setCamOff(ev.call?.type !== "video");
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
-      startRingtone().catch(() => {});
+      showIncoming(ev.call);
       return;
     }
     if (!c || (ev.call_id && ev.call_id !== c.call_id)) return;
