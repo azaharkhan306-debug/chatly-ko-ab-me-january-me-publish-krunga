@@ -916,7 +916,7 @@ agent_communication:
       
       ALL 7 TESTS PASSED (7/7) - NO FAILURES
       
-      Tested ALL NEW/CHANGED endpoints for Phase 10 at https://chatly-preview.preview.emergentagent.com/api using credentials demo@chatly.app / Demo1234 and demo2@chatly.app / Demo1234.
+      Tested ALL NEW/CHANGED endpoints for Phase 10 at https://mobile-chat-app-113.preview.emergentagent.com/api using credentials demo@chatly.app / Demo1234 and demo2@chatly.app / Demo1234.
       
       ✅ TEST 1: AI MESSAGE ACTIONS (4/4 PASS)
       • Translate Hinglish→English: 'Bhai kal report bhej dena please' → 'Bro, please send the report tomorrow.' (auto-detected source, correct translation)
@@ -1923,7 +1923,7 @@ backend_audit_fixes_phase11:
     EXPO_PUBLIC_BACKEND_URL, so in-container browsers at localhost:3000 hit Metro's SPA fallback
     for /api/* (HTML -> JSON.parse -> null -> "Cannot read properties of null (reading 'token')").
     .env now sets EXPO_PUBLIC_BACKEND_URL (+ EXPO_PACKAGER_HOSTNAME/PROXY_URL) to the preview origin
-    https://chatly-preview.preview.emergentagent.com — verified baked into the
+    https://mobile-chat-app-113.preview.emergentagent.com — verified baked into the
     bundle, login 200 via preview AND via localhost:3000 browser test (lands on Chats with real data,
     zero JS errors). Expo Go on phones also works now (absolute URL). Please rerun the full UI
     regression at http://localhost:3000 (or the preview URL) — all groups including swipe navigation
@@ -2033,7 +2033,7 @@ verification_round_phase11:
     status_history:
       -working: true
       -agent: "main"
-      -comment: "EXPO_PUBLIC_BACKEND_URL + EXPO_PACKAGER_HOSTNAME/PROXY_URL set to preview origin https://chatly-preview.preview.emergentagent.com. Verified: login POST 200 via preview AND in-container browser; lands on Chats with real data; WS wss via preview connects; bundle contains the absolute URL so Expo Go on phones can reach the backend."
+      -comment: "EXPO_PUBLIC_BACKEND_URL + EXPO_PACKAGER_HOSTNAME/PROXY_URL set to preview origin https://mobile-chat-app-113.preview.emergentagent.com. Verified: login POST 200 via preview AND in-container browser; lands on Chats with real data; WS wss via preview connects; bundle contains the absolute URL so Expo Go on phones can reach the backend."
 
 complete_cycle_phase12:
   - task: "One-cycle fix: AI provider fallback (digest 503), chats 'Check connection' fix, incoming-call notification routing, perf/robustness"

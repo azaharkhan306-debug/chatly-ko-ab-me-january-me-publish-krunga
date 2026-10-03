@@ -16,7 +16,7 @@ import pytest
 import requests
 
 BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "").rstrip("/") or \
-           "https://chatly-preview.preview.emergentagent.com"
+           "https://mobile-chat-app-113.preview.emergentagent.com"
 
 DEMO1 = {"email": "demo@chatly.app", "password": "Demo1234"}
 DEMO2 = {"email": "demo2@chatly.app", "password": "Demo1234"}
