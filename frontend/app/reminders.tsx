@@ -6,14 +6,6 @@ import { useTheme, spacing, radius } from "@/src/theme";
 import { AppText, Icon, Card, EmptyState, Loading, Input, Button, useToast } from "@/src/ui";
 import { StackHeader } from "@/src/Header";
 import { api } from "@/src/api";
-import { scheduleLocalReminder } from "@/src/notifications";
-
-function parseWhen(s: string): Date | null {
-  if (!s?.trim()) return null;
-  const t = Date.parse(s);
-  if (!isNaN(t)) return new Date(t);
-  return null; // natural-language phrases are stored as-is; only ISO/parseable dates schedule a local notification
-}
 
 export default function Reminders() {
   const { colors } = useTheme();
@@ -46,10 +38,7 @@ export default function Reminders() {
     if (!title.trim()) return;
     Keyboard.dismiss();
     try {
-      const res = await api.post<{ reminder?: any }>("/reminders", { title: title.trim(), remind_at: when.trim() || null });
-      // Schedule a real local notification if the "when" is a concrete date/time.
-      const at = parseWhen(when);
-      if (at) { try { await scheduleLocalReminder(res?.reminder?.id || String(Date.now()), "Reminder", title.trim(), at); } catch {} }
+      await api.post<{ reminder?: any }>("/reminders", { title: title.trim(), remind_at: when.trim() || null });
       setTitle(""); setWhen(""); setAddOpen(false); load(); toast.show("Reminder set", "success");
     } catch { toast.show("Failed", "error"); }
   };

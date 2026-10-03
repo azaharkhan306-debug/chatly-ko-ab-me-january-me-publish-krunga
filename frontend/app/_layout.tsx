@@ -1,4 +1,4 @@
-import { Stack, useRouter } from "expo-router";
+import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect } from "react";
 import { LogBox } from "react-native";
@@ -9,66 +9,21 @@ import { StatusBar } from "expo-status-bar";
 
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { ThemeProvider, useTheme } from "@/src/theme";
-import { AuthProvider, useAuth } from "@/src/auth";
+import { AuthProvider } from "@/src/auth";
 import { WsProvider } from "@/src/ws";
 import { ToastProvider } from "@/src/ui";
 import { CallProvider } from "@/src/calls";
 import { ErrorBoundary } from "@/src/ErrorBoundary";
 import { installGlobalErrorHandlers } from "@/src/globalErrors";
-import { configureNotificationHandler, ensureAndroidChannels, routeFromNotificationData } from "@/src/notifications";
-import { presentIncomingCallFromPush } from "@/src/calls";
 import { track } from "@/src/analytics";
 
 LogBox.ignoreAllLogs(true);
 SplashScreen.preventAutoHideAsync();
 installGlobalErrorHandlers();
-configureNotificationHandler();
 
 function ThemedStatusBar() {
   const { isDark } = useTheme();
   return <StatusBar style={isDark ? "light" : "dark"} />;
-}
-
-// Routes a tapped push notification to the right screen (foreground/background/cold-start).
-function NotificationRouter() {
-  const router = useRouter();
-  const { user } = useAuth();
-  useEffect(() => {
-    let Notifications: any = null;
-    try { Notifications = require("expo-notifications"); } catch { return; }
-    ensureAndroidChannels();
-    const handle = (resp: any) => {
-      const data = resp?.notification?.request?.content?.data;
-      if (!data) return;
-      // Incoming-call taps must surface the ringing UI (foreground, background
-      // and cold-start), not just navigate somewhere.
-      if (data.type === "incoming_call") {
-        const call = {
-          call_id: data.call_id,
-          chat_id: data.chat_id,
-          type: data.call_type || "voice",
-          caller_id: data.caller_id,
-          caller_name: data.caller_name,
-          caller_avatar: data.caller_avatar,
-          status: "ringing",
-        };
-        // The CallProvider registers its presenter after mount — retry briefly
-        // to survive cold-start races when the app was fully closed.
-        let tries = 0;
-        const tryPresent = () => {
-          if (!presentIncomingCallFromPush(call) && tries++ < 8) setTimeout(tryPresent, 600);
-        };
-        tryPresent();
-        return;
-      }
-      const route = routeFromNotificationData(data);
-      if (route) { try { router.push(route as any); } catch {} }
-    };
-    const sub = Notifications.addNotificationResponseReceivedListener(handle);
-    Notifications.getLastNotificationResponseAsync?.().then((r: any) => { if (r) handle(r); }).catch(() => {});
-    return () => { try { sub.remove(); } catch {} };
-  }, [router, user?.user_id]);
-  return null;
 }
 
 export default function RootLayout() {
@@ -109,7 +64,6 @@ export default function RootLayout() {
                   <ToastProvider>
                     <CallProvider>
                       <ThemedStatusBar />
-                      <NotificationRouter />
                       <Stack screenOptions={{ headerShown: false, animation: "slide_from_right" }}>
                         <Stack.Screen name="index" />
                         <Stack.Screen name="(auth)" />

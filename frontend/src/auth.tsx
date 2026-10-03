@@ -1,11 +1,10 @@
-import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from "react";
+import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { Platform } from "react-native";
 import * as WebBrowser from "expo-web-browser";
 import * as Linking from "expo-linking";
 import { storage } from "@/src/utils/storage";
 import { api, TOKEN_KEY } from "@/src/api";
 import { signInFirebaseWithCustomToken, signOutFirebase } from "@/src/firebase";
-import { registerPushToken, unregisterPushToken } from "@/src/notifications";
 import { track, flushAnalytics } from "@/src/analytics";
 
 WebBrowser.maybeCompleteAuthSession();
@@ -48,10 +47,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUserState] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const pushTokenRef = useRef<string | null>(null);
 
-  // When authenticated, bring up the real Firebase session (custom token) and register
-  // this device for FCM push. Both fail-soft so they never block the app.
+  // When authenticated, bring up the real Firebase session (custom token).
+  // Fail-soft so it never blocks the app.
   useEffect(() => {
     if (!token) return;
     let cancelled = false;
@@ -60,10 +58,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const r = await api.get<{ firebase_token: string }>("/auth/firebase-token");
         if (!cancelled && r?.firebase_token) await signInFirebaseWithCustomToken(r.firebase_token);
       } catch { /* Firebase optional; app still works on JWT */ }
-      try {
-        const tok = await registerPushToken();
-        if (tok) pushTokenRef.current = tok;
-      } catch { /* push optional (native only) */ }
     })();
     return () => { cancelled = true; };
   }, [token]);
@@ -195,9 +189,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(async () => {
     try { track("logout"); await flushAnalytics(); } catch {}
-    try { await unregisterPushToken(pushTokenRef.current); } catch {}
     try { await signOutFirebase(); } catch {}
-    pushTokenRef.current = null;
     await storage.secureRemove(TOKEN_KEY);
     await storage.removeItem(USER_KEY);
     setToken(null);

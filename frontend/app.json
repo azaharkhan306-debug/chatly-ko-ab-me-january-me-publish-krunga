@@ -34,10 +34,8 @@
         "BLUETOOTH",
         "BLUETOOTH_CONNECT",
         "WAKE_LOCK",
-        "POST_NOTIFICATIONS",
         "VIBRATE",
-        "USE_FULL_SCREEN_INTENT",
-        "SCHEDULE_EXACT_ALARM"
+        "USE_FULL_SCREEN_INTENT"
       ]
     },
     "web": {
@@ -77,13 +75,6 @@
         {
           "cameraPermission": "Show your video on calls and send photos in chats",
           "microphonePermission": "Talk on voice and video calls and record voice messages"
-        }
-      ],
-      [
-        "expo-notifications",
-        {
-          "icon": "./assets/images/icon.png",
-          "color": "#FF5E00"
         }
       ],
       [
